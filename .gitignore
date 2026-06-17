@@ -1,0 +1,7 @@
+# Build output & local toolchain artifacts (never commit signing keys or APKs)
+/build/
+*.apk
+*.apk.idsig
+*.jks
+*.keystore
+*.dex

@@ -18,6 +18,7 @@ public class VolumeKeyService extends AccessibilityService {
 
     private static final String TAG = "VolumeKeyService";
     private VolumeStepController controller;
+    private VolumeLockController lockController;
     private SharedPreferences prefs;
     private Vibrator vibrator;
     private VolumeOverlay overlay;
@@ -64,8 +65,12 @@ public class VolumeKeyService extends AccessibilityService {
             controller.syncFromSystem();
             controller.startObserving();
             stepListener = new VolumeStepController.StepListener() {
-                @Override public void onStepChanged(int step, int total) {
+                @Override public void onStepChanged(int step, int total, boolean showOverlay) {
                     try { if (volumeProvider != null) volumeProvider.setCurrentVolume(step); } catch (Exception e) {}
+                    // Only show the app bar for user-initiated changes while enabled; passive/external
+                    // changes (and the disabled state) leave the native bar to handle it on its own.
+                    if (!showOverlay) return;
+                    try { if (prefs == null || !prefs.getBoolean("enabled", false)) return; } catch (Exception e) { return; }
                     try { if (overlay != null) overlay.show(step, total); }
                     catch (Exception e) { Log.w(TAG, "overlay", e); overlay = null; }
                 }
@@ -74,8 +79,15 @@ public class VolumeKeyService extends AccessibilityService {
         } catch (Exception e) { Log.e(TAG, "controller", e); }
 
         try {
+            lockController = VolumeLockController.getInstance(this);
+            lockController.enforceAll();
+            lockController.startObserving();
+        } catch (Exception e) { Log.e(TAG, "lock", e); }
+
+        try {
             if (Settings.canDrawOverlays(this)) {
                 overlay = new VolumeOverlay(this);
+                overlay.setLockController(lockController);
                 overlay.setOnStepSeekListener(new VolumeOverlay.OnStepSeekListener() {
                     @Override public void onStepSeek(int step) {
                         try { if (controller != null) controller.setStep(step); } catch (Exception e) {}
@@ -152,7 +164,8 @@ public class VolumeKeyService extends AccessibilityService {
         overlay = null;
         try { if (controller != null && stepListener != null) controller.removeStepListener(stepListener); } catch (Exception e) {}
         try { if (controller != null) controller.release(); } catch (Exception e) {}
-        controller = null; stepListener = null;
+        try { if (lockController != null) lockController.release(); } catch (Exception e) {}
+        controller = null; lockController = null; stepListener = null;
     }
 
     @Override public void onAccessibilityEvent(AccessibilityEvent event) {}

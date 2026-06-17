@@ -4,14 +4,22 @@ import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.graphics.PorterDuff;
+import android.graphics.drawable.GradientDrawable;
+import android.media.AudioManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.util.Log;
+import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.ImageButton;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
 import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -20,9 +28,13 @@ public class MainActivity extends Activity {
     private static final String TAG = "MainActivity";
     private SharedPreferences prefs;
     private EditText stepsInput, stepSizeInput;
-    private TextView statusText, accessibilityStatus, overlayStatus, volumePreviewText;
+    private TextView statusText, accessibilityStatus, overlayStatus, batteryStatus, volumePreviewText;
     private Button toggleBtn;
     private SeekBar volumePreview;
+    private AudioManager audioManager;
+    private android.os.PowerManager powerManager;
+    private VolumeLockController lockController;
+    private LinearLayout lockContainer, setupSection;
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -33,6 +45,9 @@ public class MainActivity extends Activity {
         statusText = (TextView) findViewById(R.id.status_text);
         accessibilityStatus = (TextView) findViewById(R.id.accessibility_status);
         overlayStatus = (TextView) findViewById(R.id.overlay_status);
+        batteryStatus = (TextView) findViewById(R.id.battery_status);
+        setupSection = (LinearLayout) findViewById(R.id.setup_section);
+        powerManager = (android.os.PowerManager) getSystemService(Context.POWER_SERVICE);
         toggleBtn = (Button) findViewById(R.id.toggle_btn);
         volumePreview = (SeekBar) findViewById(R.id.volume_preview);
         volumePreviewText = (TextView) findViewById(R.id.volume_preview_text);
@@ -47,19 +62,110 @@ public class MainActivity extends Activity {
             @Override public void onClick(View v) { toggleEnabled(); } });
         findViewById(R.id.accessibility_btn).setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)); } });
-        findViewById(R.id.restricted_btn).setOnClickListener(new View.OnClickListener() {
+        findViewById(R.id.battery_btn).setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) {
-                try { startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getPackageName()))); }
-                catch (Exception e) { Toast.makeText(MainActivity.this, "Settings > Apps > VolumeSteps > menu > Allow restricted settings", Toast.LENGTH_LONG).show(); }
+                try {
+                    Intent i = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:" + getPackageName()));
+                    startActivity(i);
+                } catch (Exception e) {
+                    try { startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)); } catch (Exception e2) {}
+                }
             } });
         findViewById(R.id.overlay_btn).setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) {
                 try { startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:" + getPackageName()))); } catch (Exception e) {}
             } });
+        audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+        lockController = VolumeLockController.getInstance(this);
+        lockContainer = (LinearLayout) findViewById(R.id.lock_container);
         setupVolumePreview(prefs.getInt("total_steps", 200));
+        buildLockRows();
     }
 
-    @Override protected void onResume() { super.onResume(); updateStatus(); }
+    @Override protected void onResume() { super.onResume(); updateStatus(); buildLockRows(); }
+
+    private static final int LOCK_ON = 0xFF6C63FF;   // accent purple
+    private static final int LOCK_OFF = 0xFF8A8AA8;   // muted grey
+
+    private void buildLockRows() {
+        if (lockContainer == null) return;
+        lockContainer.removeAllViews();
+        final float d = getResources().getDisplayMetrics().density;
+        for (final int stream : VolumeLockController.MANAGED) {
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            rp.bottomMargin = (int)(14*d);
+
+            ImageView icon = new ImageView(this);
+            icon.setImageResource(VolumeLockController.iconResFor(stream));
+            icon.setColorFilter(0xFFBFBFE0, PorterDuff.Mode.SRC_IN);
+            LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams((int)(30*d), (int)(30*d));
+            ip.rightMargin = (int)(12*d);
+
+            TextView label = new TextView(this);
+            label.setText(VolumeLockController.labelFor(stream));
+            label.setTextColor(0xFFE2E2F2);
+            label.setTextSize(15);
+            label.setWidth((int)(104*d));
+
+            final boolean locked = lockController.isLocked(stream);
+            final SeekBar bar = new SeekBar(this);
+            int max = lockController.getMaxVolume(stream);
+            bar.setMax(max);
+            bar.setProgress(Math.min(locked ? lockController.getLockedLevel(stream)
+                    : lockController.getVolume(stream), max));
+            LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+            bp.leftMargin = (int)(4*d); bp.rightMargin = (int)(10*d);
+
+            final ImageButton lockBtn = new ImageButton(this);
+            lockBtn.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            int lpad = (int)(10*d); lockBtn.setPadding(lpad, lpad, lpad, lpad);
+            styleLock(lockBtn, locked, d);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams((int)(52*d), (int)(48*d));
+
+            bar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+                @Override public void onProgressChanged(SeekBar sb, int p, boolean fromUser) {
+                    if (!fromUser) return;
+                    if (lockController.isLocked(stream)) lockController.setLockedLevel(stream, p); // updates pin + applies
+                    else try { audioManager.setStreamVolume(stream, p, 0); } catch (Exception e) {}
+                }
+                @Override public void onStartTrackingTouch(SeekBar sb) {}
+                @Override public void onStopTrackingTouch(SeekBar sb) {}
+            });
+
+            lockBtn.setOnClickListener(new View.OnClickListener() {
+                @Override public void onClick(View v) {
+                    boolean locked2 = !lockController.isLocked(stream);
+                    lockController.setLock(stream, locked2);
+                    styleLock(lockBtn, locked2, d);
+                    Toast.makeText(MainActivity.this,
+                        VolumeLockController.labelFor(stream) + (locked2 ? " locked" : " unlocked"),
+                        Toast.LENGTH_SHORT).show();
+                }
+            });
+
+            row.addView(icon, ip);
+            row.addView(label);
+            row.addView(bar, bp);
+            row.addView(lockBtn, lp);
+            lockContainer.addView(row, rp);
+        }
+    }
+
+    /** Lock toggle: closed padlock on an accent pill when locked, open padlock on a faint pill when not. */
+    private void styleLock(ImageButton b, boolean locked, float d) {
+        b.setImageResource(locked ? R.drawable.ic_lock_closed : R.drawable.ic_lock_open);
+        b.setColorFilter(locked ? 0xFFFFFFFF : LOCK_OFF, PorterDuff.Mode.SRC_IN);
+        GradientDrawable bg = new GradientDrawable();
+        bg.setCornerRadius(12*d);
+        bg.setColor(locked ? LOCK_ON : 0x22FFFFFF);
+        bg.setStroke((int)(1*d), locked ? LOCK_ON : 0x44FFFFFF);
+        b.setBackground(bg);
+    }
 
     private void applySteps() {
         int v = parseInput(stepsInput, 15, 1000); if (v < 0) return;
@@ -98,12 +204,22 @@ public class MainActivity extends Activity {
         toggleBtn.setBackgroundColor(acc ? (en ? 0xFFF44336 : 0xFF4CAF50) : 0xFF555555);
         accessibilityStatus.setText(acc ? "\u2713 Accessibility service enabled" : "\u2717 Accessibility service NOT enabled");
         accessibilityStatus.setTextColor(acc ? 0xFF4CAF50 : 0xFFF44336);
-        View rB = findViewById(R.id.restricted_btn), rH = findViewById(R.id.restricted_hint);
-        if (Build.VERSION.SDK_INT >= 33 && !acc) { rB.setVisibility(View.VISIBLE); rH.setVisibility(View.VISIBLE); }
-        else { rB.setVisibility(View.GONE); rH.setVisibility(View.GONE); }
         overlayStatus.setText(ovl ? "\u2713 Overlay permission granted" : "\u2717 Overlay permission needed");
         overlayStatus.setTextColor(ovl ? 0xFF4CAF50 : 0xFFF44336);
         findViewById(R.id.overlay_btn).setVisibility(ovl ? View.GONE : View.VISIBLE);
+        findViewById(R.id.accessibility_btn).setVisibility(acc ? View.GONE : View.VISIBLE);
+
+        boolean batt = isBatteryUnrestricted();
+        batteryStatus.setText(batt ? "\u2713 Battery unrestricted" : "\u2717 Battery optimization is on (may stop the service)");
+        batteryStatus.setTextColor(batt ? 0xFF4CAF50 : 0xFFFF9800);
+        findViewById(R.id.battery_btn).setVisibility(batt ? View.GONE : View.VISIBLE);
+
+        // Setup card sits at the top on a fresh install; hide it once everything is granted.
+        if (setupSection != null) setupSection.setVisibility((ovl && acc && batt) ? View.GONE : View.VISIBLE);
+    }
+    private boolean isBatteryUnrestricted() {
+        try { return powerManager != null && powerManager.isIgnoringBatteryOptimizations(getPackageName()); }
+        catch (Exception e) { return true; }
     }
     private void setupVolumePreview(final int totalSteps) {
         volumePreview.setMax(totalSteps);

@@ -24,10 +24,26 @@ No internet permission. No data collection. No analytics. 3 permissions total.
 - Configurable total steps (15–1000, default 200)
 - Configurable step size per key press (1–50, default 1)
 - Vertical volume bar overlay on the right side, touch-draggable
+- **Expandable overlay** — tap the expand button to reveal side-by-side sliders for every stream (Media, Ring, Notification, Alarm, Call), like the native expanded volume panel
+- **Volume locking** — pin any stream's volume so it can't be changed except from within the app (VolumeLockr-style)
 - Screen-off volume control via MediaSession
 - Hold-to-repeat with acceleration
 - Haptic feedback
 - No notification — runs inside AccessibilityService, no foreground service needed
+
+## Volume locking
+
+Open VolumeSteps and use the **Volume Lock** section: each stream has a slider and a lock
+toggle. Tapping the lock pins that stream at its current level — any later change (hardware
+keys, Settings, another app) is immediately reverted. Adjust a locked stream's level from the
+slider here, or tap the lock again to release it. Locks are also reachable from the expanded
+overlay panel.
+
+Locking the **Media** stream pins it and disables the hardware-key stepping until you unlock it.
+
+Enforcement runs inside the accessibility service, so it is active whenever the service is
+enabled (no extra permissions). Reverting Ring/Notification while Do-Not-Disturb is active is
+best-effort and may not apply on every device.
 
 ## Permissions
 

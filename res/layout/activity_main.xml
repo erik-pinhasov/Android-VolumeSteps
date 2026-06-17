@@ -8,7 +8,30 @@
             android:textStyle="bold" android:gravity="center" android:layout_marginBottom="4dp" />
         <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
             android:text="Fine-grained volume control" android:textSize="14sp"
-            android:textColor="#FF8888AA" android:gravity="center" android:layout_marginBottom="32dp" />
+            android:textColor="#FF8888AA" android:gravity="center" android:layout_marginBottom="24dp" />
+
+        <LinearLayout android:id="@+id/setup_section" android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="vertical" android:background="#FF222244" android:padding="16dp" android:layout_marginBottom="28dp">
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:text="Setup required" android:textSize="17sp" android:textColor="#FFFFD54F" android:textStyle="bold" android:layout_marginBottom="4dp" />
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:text="Grant the items below so VolumeSteps works reliably." android:textSize="12sp"
+                android:textColor="#FFAAAACC" android:layout_marginBottom="14dp" />
+            <TextView android:id="@+id/overlay_status" android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:textSize="14sp" android:layout_marginBottom="6dp" />
+            <Button android:id="@+id/overlay_btn" android:layout_width="match_parent" android:layout_height="44dp"
+                android:text="Grant Overlay Permission" android:textColor="#FFFFFFFF" android:background="#FF3D3D6B"
+                android:layout_marginBottom="14dp" android:visibility="gone" />
+            <TextView android:id="@+id/accessibility_status" android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:textSize="14sp" android:layout_marginBottom="6dp" />
+            <Button android:id="@+id/accessibility_btn" android:layout_width="match_parent" android:layout_height="44dp"
+                android:text="Open Accessibility Settings" android:textColor="#FFFFFFFF" android:background="#FF3D3D6B" android:layout_marginBottom="14dp" />
+            <TextView android:id="@+id/battery_status" android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:textSize="14sp" android:layout_marginBottom="6dp" />
+            <Button android:id="@+id/battery_btn" android:layout_width="match_parent" android:layout_height="44dp"
+                android:text="Allow unrestricted battery" android:textColor="#FFFFFFFF" android:background="#FF3D3D6B" />
+        </LinearLayout>
+
         <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
             android:text="Total volume steps" android:textSize="16sp" android:textColor="#FFCCCCDD" android:layout_marginBottom="8dp" />
         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
@@ -39,20 +62,11 @@
         <TextView android:id="@+id/status_text" android:layout_width="match_parent" android:layout_height="wrap_content"
             android:textSize="14sp" android:textColor="#FFAAAACC" android:gravity="center" android:layout_marginBottom="28dp" />
         <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:text="Permissions" android:textSize="16sp" android:textColor="#FFCCCCDD" android:textStyle="bold" android:layout_marginBottom="12dp" />
-        <TextView android:id="@+id/overlay_status" android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:textSize="14sp" android:layout_marginBottom="6dp" />
-        <Button android:id="@+id/overlay_btn" android:layout_width="match_parent" android:layout_height="44dp"
-            android:text="Grant Overlay Permission" android:textColor="#FFFFFFFF" android:background="#FF3D3D6B"
-            android:layout_marginBottom="12dp" android:visibility="gone" />
-        <TextView android:id="@+id/accessibility_status" android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:textSize="14sp" android:layout_marginBottom="6dp" />
-        <Button android:id="@+id/accessibility_btn" android:layout_width="match_parent" android:layout_height="44dp"
-            android:text="Open Accessibility Settings" android:textColor="#FFFFFFFF" android:background="#FF3D3D6B" android:layout_marginBottom="8dp" />
-        <TextView android:id="@+id/restricted_hint" android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:text="If VolumeSteps is grayed out, tap below first, then tap the \u22ee menu and choose Allow restricted settings"
-            android:textSize="12sp" android:textColor="#FFFF9800" android:layout_marginBottom="6dp" android:visibility="gone" />
-        <Button android:id="@+id/restricted_btn" android:layout_width="match_parent" android:layout_height="44dp"
-            android:text="Open App Info (Restricted Settings)" android:textColor="#FFFFFFFF" android:background="#FF5D4E37" android:visibility="gone" />
+            android:text="Volume Lock" android:textSize="16sp" android:textColor="#FFCCCCDD" android:textStyle="bold" android:layout_marginBottom="4dp" />
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="Tap the lock to pin a stream's volume. Locked streams can only be changed here." android:textSize="12sp"
+            android:textColor="#FF8888AA" android:layout_marginBottom="12dp" />
+        <LinearLayout android:id="@+id/lock_container" android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="vertical" android:layout_marginBottom="12dp" />
     </LinearLayout>
 </ScrollView>

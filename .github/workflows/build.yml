@@ -77,7 +77,7 @@ jobs:
           mkdir -p build/gen build/classes
 
           aapt package -f -m -S res -J build/gen -M AndroidManifest.xml -I $ANDROID_JAR
-          javac -source 1.8 -target 1.8 -bootclasspath $ANDROID_JAR -classpath $ANDROID_JAR \
+          javac -source 1.8 -target 1.8 -encoding UTF-8 -bootclasspath $ANDROID_JAR -classpath $ANDROID_JAR \
             -d build/classes -Xlint:-options \
             build/gen/com/volumesteps/R.java src/com/volumesteps/*.java
           $DX --dex --output=build/classes.dex build/classes/
@@ -85,19 +85,34 @@ jobs:
           (cd build && aapt add app.apk classes.dex)
           zipalign -f 4 build/app.apk build/app-aligned.apk
 
-      - name: Generate key & sign APK
+      - name: Sign APK
+        env:
+          KEYSTORE_B64: ${{ secrets.SIGNING_KEYSTORE_B64 }}
+          KEYSTORE_PASS: ${{ secrets.SIGNING_KEYSTORE_PASS }}
+          KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.SIGNING_KEY_PASS }}
         run: |
-          keytool -genkeypair \
-            -keystore build/key.jks \
-            -alias volumesteps \
-            -keyalg RSA -keysize 2048 \
-            -validity 36500 \
-            -storepass android -keypass android \
-            -dname "CN=VolumeSteps Developer,O=VolumeSteps,C=IL" \
-            2>/dev/null
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "Signing with the stable keystore from secrets (releases will update over each other)."
+            echo "$KEYSTORE_B64" | base64 -d > build/key.jks
+            STOREPASS="$KEYSTORE_PASS"
+            KEYPASS="${KEY_PASS:-$KEYSTORE_PASS}"
+            ALIAS="${KEY_ALIAS:-volumesteps}"
+          else
+            echo "::warning::No SIGNING_KEYSTORE_B64 secret set — generating a throwaway key. This APK will NOT install as an update over a previous release (signature mismatch); users would have to uninstall first. Add the SIGNING_KEYSTORE_B64 secret for stable signing."
+            keytool -genkeypair \
+              -keystore build/key.jks \
+              -alias volumesteps \
+              -keyalg RSA -keysize 2048 \
+              -validity 36500 \
+              -storepass android -keypass android \
+              -dname "CN=VolumeSteps Developer,O=VolumeSteps,C=IL" \
+              2>/dev/null
+            STOREPASS=android; KEYPASS=android; ALIAS=volumesteps
+          fi
           apksigner sign \
-            --ks build/key.jks --ks-key-alias volumesteps \
-            --ks-pass pass:android --key-pass pass:android \
+            --ks build/key.jks --ks-key-alias "$ALIAS" \
+            --ks-pass "pass:$STOREPASS" --key-pass "pass:$KEYPASS" \
             --out build/VolumeSteps.apk build/app-aligned.apk
 
       - name: Verify APK

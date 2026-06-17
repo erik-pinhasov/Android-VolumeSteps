@@ -6,7 +6,7 @@ import android.database.ContentObserver;
 import android.media.AudioManager;
 import android.media.audiofx.Equalizer;
 import android.os.Handler;
-import android.os.Looper;
+import android.os.HandlerThread;
 import android.provider.Settings;
 import android.util.Log;
 
@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 public class VolumeStepController {
 
@@ -21,25 +22,36 @@ public class VolumeStepController {
     private final Context context;
     private final AudioManager audioManager;
     private final SharedPreferences prefs;
-    private final Handler handler = new Handler(Looper.getMainLooper());
+    // Volume changes (incl. external/Bluetooth) arrive through a ContentObserver and trigger audio
+    // work (setStreamVolume, equalizer band loops). Doing that on the main thread floods it under
+    // bursts and ANRs the accessibility service -> Android marks it "malfunctioning". Run the
+    // observer and its work on a dedicated background thread instead.
+    // Initialized as field initializers (run before volumeObserver below, which needs handler).
+    private final HandlerThread workerThread = startWorker("VolumeStepsWorker");
+    private final Handler handler = new Handler(workerThread.getLooper());
     private final Map<Integer, Equalizer> equalizers = new ConcurrentHashMap<>();
     private final int systemMax;
     private int[] perLevelMb;
     private int[][] stepTable;
-    private int lastSystemVol = -1;
+    private volatile int lastSystemVol = -1;
     private volatile boolean selfChanging = false;
     private long lastStepTime = 0;
     private final List<Runnable> rampRunnables = new ArrayList<>();
 
-    public interface StepListener { void onStepChanged(int step, int total); }
-    private final List<StepListener> listeners = new ArrayList<>();
+    // showOverlay distinguishes user-initiated changes (key press, drag, session) from passive
+    // syncs picked up by the volume observer (external apps, headsets, system) — the app bar
+    // only appears for the former, so external changes don't double up with the native bar.
+    public interface StepListener { void onStepChanged(int step, int total, boolean showOverlay); }
+    // Iterated from the worker thread (observer) but mutated from the main/binder thread (service,
+    // MediaSession) -> needs a thread-safe list to avoid ConcurrentModificationException.
+    private final List<StepListener> listeners = new CopyOnWriteArrayList<>();
     public void addStepListener(StepListener l) { listeners.add(l); }
     public void removeStepListener(StepListener l) { listeners.remove(l); }
 
-    private void notifyStepChanged() {
+    private void notifyStepChanged(boolean showOverlay) {
         int step = getCurrentStep(), total = getTotalSteps();
         for (StepListener l : listeners) {
-            try { l.onStepChanged(step, total); } catch (Exception e) {}
+            try { l.onStepChanged(step, total, showOverlay); } catch (Exception e) {}
         }
     }
 
@@ -59,7 +71,7 @@ public class VolumeStepController {
                         setCurrentStep(Math.max(1, Math.min(step, totalSteps)));
                     }
                     setAllGain(gainOffsetForStep(getCurrentStep()));
-                    notifyStepChanged();
+                    notifyStepChanged(false); // passive external change: don't show the app bar
                 }
             } catch (Exception e) { Log.w(TAG, "observer error", e); }
         }
@@ -72,6 +84,12 @@ public class VolumeStepController {
         this.systemMax = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
         this.perLevelMb = measurePerLevelMb();
         buildStepTable();
+    }
+
+    private static HandlerThread startWorker(String name) {
+        HandlerThread t = new HandlerThread(name);
+        t.start();
+        return t;
     }
 
     private static volatile VolumeStepController instance;
@@ -113,14 +131,18 @@ public class VolumeStepController {
         if (eq != null) { try { eq.setEnabled(false); eq.release(); } catch (Exception e) {} }
     }
 
+    /** Media stream pinned by the lock feature; reads the same prefs file (key "lock_3"). */
+    private boolean isMediaLocked() { return prefs.getBoolean("lock_" + AudioManager.STREAM_MUSIC, false); }
+
     public int stepUp() { setStep(getCurrentStep() + getStepSize()); return getCurrentStep(); }
     public int stepDown() { setStep(getCurrentStep() - getStepSize()); return getCurrentStep(); }
 
     public void setStep(int step) {
+        if (isMediaLocked()) return; // media is pinned by the lock feature; ignore step changes
         int totalSteps = getTotalSteps();
         int newStep = Math.max(0, Math.min(step, totalSteps));
         setCurrentStep(newStep);
-        if (newStep == 0) { setSystemVolume(0); setAllGain(0); notifyStepChanged(); return; }
+        if (newStep == 0) { setSystemVolume(0); setAllGain(0); notifyStepChanged(true); return; }
 
         ensureStepTable();
         int targetVol, gainOffset;
@@ -152,7 +174,7 @@ public class VolumeStepController {
             }
             lastStepTime = now;
         } else { lastStepTime = System.currentTimeMillis(); setAllGain(gainOffset); }
-        notifyStepChanged();
+        notifyStepChanged(true);
     }
 
     public void syncFromSystem() {
@@ -246,6 +268,7 @@ public class VolumeStepController {
         }
         equalizers.clear();
         listeners.clear();
+        try { workerThread.quitSafely(); } catch (Exception e) {}
         synchronized (VolumeStepController.class) { instance = null; }
     }
 }
