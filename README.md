@@ -1,5 +1,9 @@
 # VolumeSteps
 
+[![CI](https://github.com/erik-pinhasov/VolumeSteps/actions/workflows/ci.yml/badge.svg)](https://github.com/erik-pinhasov/VolumeSteps/actions/workflows/ci.yml)
+[![Release](https://github.com/erik-pinhasov/VolumeSteps/actions/workflows/build.yml/badge.svg)](https://github.com/erik-pinhasov/VolumeSteps/actions/workflows/build.yml)
+[![Latest release](https://img.shields.io/github/v/release/erik-pinhasov/VolumeSteps?sort=semver)](https://github.com/erik-pinhasov/VolumeSteps/releases/latest)
+
 A minimal, open-source Android app that replaces the system's coarse ~15 volume levels with fine-grained control. Each hardware volume button press moves by a configurable step size.
 
 No internet permission. No data collection. No analytics. 3 permissions total.
@@ -68,18 +72,30 @@ Maps N custom steps across the system's ~15 volume levels using `android.media.a
 
 ## Building from source
 
+The exact steps CI runs are kept in [`scripts/`](scripts/), so a local build and a release build are identical:
+
 ```bash
-sudo apt install android-sdk-platform-23 dalvik-exchange aapt zipalign apksigner default-jdk
+# Debian/Ubuntu — install the toolchain (once)
+bash scripts/install-android-tools.sh
 
-ANDROID_JAR=/usr/lib/android-sdk/platforms/android-23/android.jar
-mkdir -p build/gen build/classes
+# Optional: run the same privacy/security checks CI enforces
+bash scripts/security-scan.sh
 
-aapt package -f -m -S res -J build/gen -M AndroidManifest.xml -I $ANDROID_JAR
-javac -source 1.8 -target 1.8 -bootclasspath $ANDROID_JAR -classpath $ANDROID_JAR \
-  -d build/classes build/gen/com/volumesteps/R.java src/com/volumesteps/*.java
-dx --dex --output=build/classes.dex build/classes/
-aapt package -f -S res -M AndroidManifest.xml -I $ANDROID_JAR -F build/app.apk
-(cd build && aapt add app.apk classes.dex)
-zipalign -f 4 build/app.apk build/app-aligned.apk
+# Compile the unsigned, zipaligned APK to build/app-aligned.apk
+bash scripts/build-apk.sh
+
+# Sign it with your own key
 apksigner sign --ks your-key.jks --out build/VolumeSteps.apk build/app-aligned.apk
+```
+
+## Releasing
+
+Releases are cut by pushing a `v*` tag; GitHub Actions then builds, scans, signs, and publishes
+the APK to [Releases](../../releases). The tag must match `android:versionName` in
+`AndroidManifest.xml` or the workflow fails fast.
+
+```bash
+# after bumping android:versionName / android:versionCode in AndroidManifest.xml
+git tag v1.5
+git push origin v1.5
 ```

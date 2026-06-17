@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancel superseded runs on the same ref so the badge reflects the latest commit.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build & scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Install Android build tools
+        run: bash scripts/install-android-tools.sh
+
+      - name: Security scan
+        run: bash scripts/security-scan.sh
+
+      - name: Build APK
+        run: bash scripts/build-apk.sh
+
+      - name: Upload unsigned APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: VolumeSteps-unsigned-${{ github.sha }}
+          path: build/app-aligned.apk
+          retention-days: 14

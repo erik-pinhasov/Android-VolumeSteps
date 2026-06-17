@@ -1,4 +1,4 @@
-name: Build & Release APK
+name: Release APK
 
 on:
   push:
@@ -6,8 +6,12 @@ on:
       - 'v*'
   workflow_dispatch:
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
-  build:
+  release:
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -16,74 +20,28 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
+      - name: Verify tag matches manifest versionName
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          VERSION_NAME=$(grep -oP 'android:versionName="\K[^"]+' AndroidManifest.xml)
+          TAG="${GITHUB_REF_NAME#v}"
+          echo "Tag: $GITHUB_REF_NAME  →  $TAG"
+          echo "Manifest versionName: $VERSION_NAME"
+          if [ "$TAG" != "$VERSION_NAME" ]; then
+            echo "❌ FAIL: tag v$TAG does not match AndroidManifest versionName $VERSION_NAME."
+            echo "Bump android:versionName (and versionCode) before tagging, or tag v$VERSION_NAME."
+            exit 1
+          fi
+          echo "✅ PASS: tag matches manifest"
+
       - name: Install Android build tools
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y \
-            android-sdk-platform-23 \
-            dalvik-exchange \
-            aapt \
-            zipalign \
-            apksigner \
-            default-jdk
+        run: bash scripts/install-android-tools.sh
 
-      - name: "Security scan: no INTERNET permission"
-        run: |
-          echo "Checking AndroidManifest.xml..."
-          if grep -i "android.permission.INTERNET" AndroidManifest.xml; then
-            echo "❌ FAIL: INTERNET permission found!"
-            exit 1
-          fi
-          echo "✅ PASS: No INTERNET permission"
-
-      - name: "Security scan: no network code"
-        run: |
-          echo "Scanning source for network/tracking code..."
-          PATTERNS="HttpURLConnection\|OkHttp\|Retrofit\|java\.net\.URL\|Socket(\|ServerSocket"
-          PATTERNS="$PATTERNS\|DatagramSocket\|HttpClient\|javax\.net"
-          if grep -rn "$PATTERNS" src/ 2>/dev/null; then
-            echo "❌ FAIL: Network code found!"
-            exit 1
-          fi
-          echo "✅ PASS: No network code"
-
-      - name: "Security scan: no data collection"
-        run: |
-          echo "Scanning for data collection patterns..."
-          PATTERNS="getDeviceId\|getSubscriberId\|ANDROID_ID\|advertisingId"
-          PATTERNS="$PATTERNS\|firebase\|analytics\|mixpanel\|amplitude\|appsflyer"
-          PATTERNS="$PATTERNS\|DexClassLoader\|InMemoryDexClassLoader\|PathClassLoader"
-          if grep -rn "$PATTERNS" src/ 2>/dev/null; then
-            echo "❌ FAIL: Data collection or dynamic code loading found!"
-            exit 1
-          fi
-          echo "✅ PASS: No data collection or dynamic code loading"
-
-      - name: "Security scan: verify permissions count"
-        run: |
-          COUNT=$(grep -c "uses-permission" AndroidManifest.xml)
-          echo "Permissions declared: $COUNT"
-          grep "uses-permission" AndroidManifest.xml
-          if [ "$COUNT" -gt 5 ]; then
-            echo "❌ FAIL: Too many permissions ($COUNT)"
-            exit 1
-          fi
-          echo "✅ PASS: Permission count OK ($COUNT)"
+      - name: Security scan
+        run: bash scripts/security-scan.sh
 
       - name: Build APK
-        run: |
-          ANDROID_JAR=/usr/lib/android-sdk/platforms/android-23/android.jar
-          DX=/usr/lib/android-sdk/build-tools/debian/dx
-          mkdir -p build/gen build/classes
-
-          aapt package -f -m -S res -J build/gen -M AndroidManifest.xml -I $ANDROID_JAR
-          javac -source 1.8 -target 1.8 -encoding UTF-8 -bootclasspath $ANDROID_JAR -classpath $ANDROID_JAR \
-            -d build/classes -Xlint:-options \
-            build/gen/com/volumesteps/R.java src/com/volumesteps/*.java
-          $DX --dex --output=build/classes.dex build/classes/
-          aapt package -f -S res -M AndroidManifest.xml -I $ANDROID_JAR -F build/app.apk
-          (cd build && aapt add app.apk classes.dex)
-          zipalign -f 4 build/app.apk build/app-aligned.apk
+        run: bash scripts/build-apk.sh
 
       - name: Sign APK
         env:
@@ -154,30 +112,29 @@ jobs:
 
           echo "Analysis ID: $ANALYSIS_ID"
           echo "Waiting for scan to complete..."
-          sleep 30
-
-          # Get results
-          RESULT=$(curl -s \
-            --url "https://www.virustotal.com/api/v3/analyses/$ANALYSIS_ID" \
-            --header "x-apikey: $VT_API_KEY")
+          # Poll for up to ~3 minutes instead of a fixed sleep.
+          STATUS=""
+          for i in $(seq 1 18); do
+            sleep 10
+            RESULT=$(curl -s \
+              --url "https://www.virustotal.com/api/v3/analyses/$ANALYSIS_ID" \
+              --header "x-apikey: $VT_API_KEY")
+            STATUS=$(echo "$RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['attributes']['status'])" 2>/dev/null || echo "")
+            echo "  attempt $i: status=$STATUS"
+            [ "$STATUS" = "completed" ] && break
+          done
 
           MALICIOUS=$(echo "$RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['attributes']['stats']['malicious'])" 2>/dev/null || echo "?")
           UNDETECTED=$(echo "$RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['attributes']['stats']['undetected'])" 2>/dev/null || echo "?")
 
-          # Get the permanent file URL
-          SHA256=$(sha256sum build/VolumeSteps.apk | cut -d' ' -f1)
+          SHA256=$(cut -d' ' -f1 build/VolumeSteps.apk.sha256)
           VT_URL="https://www.virustotal.com/gui/file/$SHA256"
 
           echo ""
           echo "=== VirusTotal Results ==="
-          echo "Malicious: $MALICIOUS"
-          echo "Clean: $UNDETECTED"
+          echo "Malicious: $MALICIOUS | Clean: $UNDETECTED"
           echo "Full report: $VT_URL"
-          echo ""
 
-          echo "VT_URL=$VT_URL" >> $GITHUB_ENV
-          echo "VT_MALICIOUS=$MALICIOUS" >> $GITHUB_ENV
-          echo "VT_CLEAN=$UNDETECTED" >> $GITHUB_ENV
           echo "VT_RESULT=Malicious: $MALICIOUS | Clean: $UNDETECTED — [Full Report]($VT_URL)" >> $GITHUB_ENV
 
       - name: Upload artifact
@@ -193,12 +150,14 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           name: VolumeSteps ${{ github.ref_name }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
           body: |
             ## VolumeSteps ${{ github.ref_name }}
 
             ### 🔒 Security verification
             This APK was **built automatically from source** by GitHub Actions — not uploaded from anyone's computer.
-            Click **Actions** tab → latest run to see the full public build log.
+            Click the **Actions** tab → this run to see the full public build log.
 
             | Check | Result |
             |---|---|
@@ -215,7 +174,7 @@ jobs:
             ```
             sha256sum VolumeSteps.apk
             ```
-            Compare with `VolumeSteps.apk.sha256`
+            Compare with `VolumeSteps.apk.sha256`.
           files: |
             build/VolumeSteps.apk
             build/VolumeSteps.apk.sha256
